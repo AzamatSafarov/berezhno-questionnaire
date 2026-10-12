@@ -1,0 +1,3 @@
+create function public.research_require_answers() returns trigger language plpgsql set search_path='' as $$ begin if exists(select 1 from jsonb_each(new.answers) where value='"skip"'::jsonb) then raise exception 'Пропуск ответа не допускается';end if;if new.completed_at is not null and (select count(*) from jsonb_each(new.answers))<>(select count(*) from public.research_items) then raise exception 'Для завершения нужны ответы на все вопросы';end if;return new;end;$$;
+revoke all on function public.research_require_answers() from public,anon,authenticated;
+create trigger require_answers before insert or update on public.research_sessions for each row execute function public.research_require_answers();

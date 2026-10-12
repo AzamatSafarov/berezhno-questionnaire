@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.vercel/
+.git/
+__pycache__/
+.venv/
+node_modules/
+test-results/
+playwright-report/
+*.xlsx
+*.csv
+*.zip
+supabase/.temp/
+supabase/.branches/
