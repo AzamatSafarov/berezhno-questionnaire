@@ -1,0 +1,483 @@
+# -*- coding: utf-8 -*-
+import os
+
+content = u"""'use strict';
+const DATA = window.QUESTIONNAIRE_DATA;
+const KEY = 'berezhno-questionnaire-v1';
+const VERSION = '1.0.0';
+const ALL = DATA.flatMap(m => m.questions);
+const main = document.getElementById('main');
+
+let state = {
+  screen: 'home',
+  method: 0,
+  offset: 0,
+  answers: {},
+  notes: {},
+  code: '',
+  save: false,
+  startedAt: null,
+  updatedAt: null
+};
+let stored = null;
+let storageError = false;
+try {
+  const raw = localStorage.getItem(KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed.version === VERSION && parsed.state && typeof parsed.state.answers === 'object') {
+      stored = parsed.state;
+    }
+  }
+} catch (e) {
+  storageError = true;
+}
+
+const escapeHTML = v => String(v ?? '').replace(/[&<>"'"]/g, c => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[c]));
+
+const done = q => Object.hasOwn(state.answers, q.id) && (q.open
+  ? typeof state.answers[q.id] === 'string' && state.answers[q.id].trim().length > 0
+  : typeof state.answers[q.id] === 'number');
+
+const skipped = q => state.answers[q.id] === 'skip';
+
+const completed = () => ALL.filter(done).length;
+
+const handled = () => ALL.filter(q => done(q) || skipped(q)).length;
+
+const perMethod = m => m.questions.filter(done).length;
+
+function toast(message) {
+  const el = document.getElementById('toast');
+  el.textContent = message;
+  el.classList.add('visible');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove('visible'), 3200);
+}
+
+function persist() {
+  state.updatedAt = new Date().toISOString();
+  if (!state.save) return;
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ version: VERSION, state }));
+  } catch (e) {
+    state.save = false;
+    storageError = true;
+    toast('Браузер не сохранил черновик. Ответы остались в открытой вкладке.');
+  }
+}
+
+function clearLocal() {
+  try { localStorage.removeItem(KEY); } catch (e) { storageError = true; }
+  stored = null;
+}
+
+function focusTop() {
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  main.focus({ preventScroll: true });
+}
+
+function render() {
+  if (state.screen === 'home') renderHome();
+  else if (state.screen === 'survey') renderSurvey();
+  else renderSummary();
+}
+
+const art = '<div class=\\"hero-art\\" aria-hidden=\\"true\\"><img src=\\"assets/hero-botanical.svg\\" alt=\\"\\" width=\\"440\\" height=\\"390\\" style=\\"width:95%;height:95%;object-fit:contain\\"><span class=\\"art-label\\">В ВАШЕЙ ТЕМП</span></div>';
+
+function renderHome() {
+  main.innerHTML =
+    '<div class=\\"landing\\"><section class=\\"hero\\"><div>' +
+      '<div class=\\"eyebrow\\">Поддержка · Переживания · Беременность</div>' +
+      '<h1>О Вашем<br><em>самочувствии.</em></h1>' +
+      '<p class=\\"lead\\">Вопросы о поддержке, переживаниях и отношении к беременности. Отвечайте в удобном для Вас темпе.</p>' +
+      '<div class=\\"hero-actions\\">' +
+        '<a class=\\"button\\" href=\\"#setup\\">Перейти к заполнению <span aria-hidden=\\"true\\">↗</span></a>' +
+        '<span class=\\"micro\\">Ответы остаются в браузере</span>' +
+      '</div>' +
+    '</div>' + art + '</section>' +
+    '<div class=\\"facts\\">' +
+      '<div class=\\"fact\\"><div class=\\"fact-icon\\" aria-hidden=\\"true\\">○</div><div><strong>10 опросников</strong><span>От поддержки до отношения к беременности</span></div></div>' +
+      '<div class=\\"fact\\"><div class=\\"fact-icon\\" aria-hidden=\\"true\\">⌁</div><div><strong>В Вашем темпе</strong><span>Можно сделать паузу и продолжить в удобное время</span></div></div>' +
+      '<div class=\\"fact\\"><div class=\\"fact-icon\\" aria-hidden=\\"true\\">◇</div><div><strong>На Вашем устройстве</strong><span>Ответы не отправляются на сервер</span></div></div>' +
+    '</div>' +
+    '<section><div class=\\"section-heading\\"><h2>10 разделов опросника</h2><p>В каждом разделе своя инструкция.<br>Варианты ответов могут различаться.</p></div>' +
+    '<div class=\\"method-grid\\">' + DATA.map(function(m, i) {
+      return '<article class=\\"method-tile\\"><div class=\\"tile-top\\"><span>' + String(i + 1).padStart(2, '0') + '</span><span>' + m.questions.length + ' ' + (i === 9 ? 'разделов' : 'вопросов') + '</span></div><h3>' + escapeHTML(m.title) + '</h3><p>' + escapeHTML(m.id) + '</p></article>';
+    }).join('') + '</div></section>' +
+    '<div class=\\"notice\\"><strong>Перед началом</strong>Некоторые вопросы касаются тревоги, трудных переживаний и чувств к ребёнку. Для завершения анкеты необходимо ответить на все обязательные вопросы. Вы можете сделать паузу или прекратить участие. Эти опросники не устанавливают диагноз и не оценивают Вас как мать.</div>' +
+    '<section class=\\"setup\\" id=\\"setup\\"><h2>Перед началом</h2><p>Имя и контакты не нужны. Код участницы указывайте, только если его выдал исследователь.</p>' +
+    '<div class=\\"setup-row\\"><label class=\\"field\\">Код участницы, если его выдал исследователь<input id=\\"participant-code\\" maxlength=\\"64\\" placeholder=\\"Необязательно\\" autocomplete=\\"off\\" value=\\"' + escapeHTML(state.code) + '\\"></label></div>' +
+    '<div class=\\"consent-row\\">' +
+      '<label class=\\"check\\"><input type=\\"checkbox\\" id=\\"consent\\"><span>Я даю согласие на участие в исследовании</span></label>' +
+      '<label class=\\"check\\"><input type=\\"checkbox\\" id=\\"test-consent\\"><span>Я даю информированное согласие на прохождение тестирования</span></label>' +
+    '</div>' +
+    '<div class=\\"setup-actions\\"><button class=\\"button\\" id=\\"start\\" disabled>Начать заполнение <span aria-hidden=\\"true\\">→</span></button></div>' +
+    (storageError ? '<p class=\\"micro\\">Хранилище браузера недоступно. Заполнение без сохранения работает.</p>' : '') +
+    '</section>' +
+    '<p class=\\"micro\\">Рабочая исследовательская версия: методики воспроизведены из предоставленного material. Публичный сбор не запущен; данные организатора и документы исследования ещё не добавлены.</p>' +
+  '</div>';
+  document.getElementById('consent').onchange = function(e) {
+    document.getElementById('start').disabled = !e.target.checked;
+  };
+  document.getElementById('start').onclick = function() {
+    state.code = document.getElementById('participant-code').value.trim();
+    state.save = false;
+    state.startedAt = new Date().toISOString();
+    state.screen = 'survey';
+    state.method = 0;
+    state.offset = 0;
+    if (!state.save) clearLocal();
+    persist();
+    render();
+    focusTop();
+  };
+  var resume = document.getElementById('resume');
+  if (resume) {
+    resume.onclick = function() {
+      if (!document.getElementById('consent').checked && !document.getElementById('test-consent').checked) {
+        toast('Сначала подтвердите условия заполнения.');
+        return;
+      }
+      state = Object.assign({}, state, stored, { screen: 'survey', save: true });
+      state.method = Math.min(9, Math.max(0, Number(state.method) || 0));
+      state.offset = Math.max(0, Number(state.offset) || 0);
+      render();
+      focusTop();
+    };
+  }
+  var del = document.getElementById('delete-draft');
+  if (del) {
+    del.onclick = function() {
+      if (confirm('Удалить сохранённый черновик с этого устройства?')) {
+        clearLocal();
+        renderHome();
+        toast('Черновик удалён.');
+      }
+    };
+  }
+}
+
+function questionHTML(q, m) {
+  var value = state.answers[q.id];
+  var opts = q.options || m.options;
+  var optionLabels = opts.map(function(o) {
+    return '<label class=\\"option\\"><input type=\\"radio\\" name=\\"' + escapeHTML(q.id) + '\\" value=\\"' + o.value + '\\" data-answer=\\"' + escapeHTML(q.id) + '\\"\\' + (value === o.value ? ' checked' : '') + '\\'><span class=\\"option-number\\" aria-hidden=\\"true\\">' + o.value + '</span><span>' + escapeHTML(o.label) + '</span></label>';
+  });
+  return '<article class=\\"question \\' + (skipped(q) ? 'skipped' : '') + '\\" id=\\"question-' + escapeHTML(q.id) + '\\"><fieldset><legend><span class=\\"question-num\\">' + String(q.number).padStart(2, '0') + '</span> ' + escapeHTML(q.text) + '</legend>' + (q.open ? '<textarea class=\\"open-answer\\" aria-label=\\"Ответ на вопрос ' + q.number + '\\" data-open=\\"' + escapeHTML(q.id) + '\\" maxlength=\\"4000\\" placeholder=\\"Напишите ответ своими словами; если других вопросов нет, укажите «Нет»\\">' + (done(q) ? escapeHTML(value) : '') + '</textarea>' : '<div class=\\"options \\' + (q.options ? 'long' : '') + '\\" style=\\"--cols:' + opts.length + '\\">' + optionLabels.join('') + '</div>') + '</fieldset>' + (q.extra ? '<label class=\\"extra\\">' + escapeHTML(q.extra) + ' <span>(необязательно)</span><textarea data-note=\\"' + escapeHTML(q.id) + '\\" maxlength=\\"2000\\">' + escapeHTML(state.notes[q.id] || '') + '</textarea></label>' : '') + '<div class=\\"question-tools\\">' + (Object.hasOwn(state.answers, q.id) ? '<button class=\\"skip-question\\" data-clear=\\"' + escapeHTML(q.id) + '\\">Убрать ответ</button>' : '') + '</div>' + (skipped(q) ? '<p class=\\"skip-message\\">Этот вопрос отмечен как пропущенный. Вы можете вернуться к нему.</p>' : '') + '</article>';
+}
+
+function renderSurvey() {
+  var m = DATA[state.method];
+  if (state.offset >= m.questions.length) state.offset = 0;
+  var batch = m.questions.slice(state.offset, state.offset + 5);
+  var count = completed();
+  var html = '<div class=\\"flow\\"><aside class=\\"sidebar\\" aria-label=\\"Разделы опросника\\"><p class=\\"sidebar-label\\">Разделы</p><nav class=\\"method-nav\\">';
+  html += DATA.map(function(x, i) {
+    return '<button class=\\"nav-item \\' + (i === state.method ? 'active' : '') + '\\" data-method=\\"' + i + '\\"\\' + (i === state.method ? ' aria-current=\\"step\\"' : '') + '\\'><span class=\\"nav-number\\">' + (perMethod(x) === x.questions.length ? '✓' : String(i + 1).padStart(2, '0')) + '</span><span>' + escapeHTML(x.title) + '<br><span class=\\"micro\\">' + perMethod(x) + ' / ' + x.questions.length + '</span></span></button>';
+  }).join('') + '</nav><div class=\\"sidebar-note\\">' + (state.save ? 'Черновик сохраняется в этом браузере.' : 'Ответы хранятся только в открытой вкладке.') + '<br><button class=\\"text-button\\" id=\\"pause\\">Пауза и сохранение</button><br><button class=\\"text-button\\" id=\\"review\\">Обзор ответов</button></div></aside><section class=\\"flow-content\\"><div class=\\"progress-row\\"><span>Раздел ' + (state.method + 1) + ' из 10</span><span id=\\"overall-count\\">' + count + ' из ' + ALL.length + ' ответов</span></div><div class=\\"progress\\" role=\\"progressbar\\" aria-label=\\"Общий прогресс заполнения\\" aria-valuemin=\\"0\\" aria-valuemax=\\"' + ALL.length + '\\" aria-valuenow=\\"' + count + '\\"><div class=\\"progress-bar\\" style=\\"width:' + (100 * count / ALL.length) + '%\\\"></div></div><div class=\\"method-head\\"><h1>' + escapeHTML(m.title) + '</h1><div class=\\"method-meta\\"><span class=\\"pill\\">' + escapeHTML(m.id) + '</span><span>' + escapeHTML(m.period) + '</span><span>Вопросы ' + (state.offset + 1) + '–' + (state.offset + batch.length) + ' из ' + m.questions.length + '</span></div></div><div class=\\"instruction\\"><h2>Инструкция</h2><p>' + escapeHTML(m.instruction) + '</p>' + (m.id === 'PDQ' ? '<p>Вас беспокоит, волнует или расстраивает на данном этапе беременности:</p>' : '') + '<p class=\\"micro\\">Выберите один ответ на каждый вопрос. Для перехода дальше заполните все вопросы страницы.</p></div><div id=\\"validation\\" role=\\"alert\\"></div><div class=\\"questions\\">' + batch.map(function(q) { return questionHTML(q, m); }).join('') + '</div><div class=\\"flow-actions\\"><button class=\\"button secondary\\" id=\\"back\\"\\' + (state.method === 0 && state.offset === 0 ? ' disabled' : '') + '\\'>← Назад</button><button class=\\"text-button\\" id=\\"pause-mobile\\">Пауза</button><button class=\\"button\\" id=\\"next\\">' + (state.method === 9 && state.offset + 5 >= m.questions.length ? 'К обзору ответов' : 'Далее') + ' →</button></div></section></div>';
+  main.innerHTML = html;
+  document.querySelectorAll('[data-method]').forEach(function(b) {
+    b.onclick = function() {
+      state.method = Number(b.dataset.method);
+      state.offset = 0;
+      persist();
+      render();
+      focusTop();
+    };
+  });
+  document.getElementById('back').onclick = function() {
+    if (state.offset > 0) {
+      state.offset -= 5;
+    } else {
+      state.method--;
+      state.offset = Math.floor((DATA[state.method].questions.length - 1) / 5) * 5;
+    }
+    persist();
+    render();
+    focusTop();
+  };
+  document.getElementById('next').onclick = function() {
+    var missing = batch.filter(function(q) { return !done(q); });
+    if (missing.length) {
+      var box = document.getElementById('validation');
+      box.className = 'validation';
+      box.textContent = 'Ответьте на каждый вопрос страницы, чтобы продолжить.';
+      document.getElementById('question-' + missing[0].id).scrollIntoView({ block: 'center', behavior: 'instant' });
+      return;
+    }
+    if (state.offset + 5 < m.questions.length) {
+      state.offset += 5;
+    } else if (state.method < 9) {
+      state.method++;
+      state.offset = 0;
+    } else {
+      state.screen = 'summary';
+    }
+    persist();
+    render();
+    focusTop();
+  };
+  document.getElementById('pause').onclick = pause;
+  document.getElementById('pause-mobile').onclick = pause;
+  document.getElementById('review').onclick = function() {
+    state.screen = 'summary';
+    persist();
+    render();
+    focusTop();
+  };
+  bindQuestions();
+  updateProgress();
+}
+
+function updateProgress() {
+  var count = completed();
+  var label = document.getElementById('overall-count');
+  if (label) label.textContent = count + ' из ' + ALL.length + ' ответов';
+  var bar = document.querySelector('[role=progressbar]');
+  if (bar) {
+    bar.setAttribute('aria-valuenow', count);
+    bar.querySelector('.progress-bar').style.width = 100 * count / ALL.length + '%';
+  }
+  document.querySelectorAll('[data-method]').forEach(function(b) {
+    var x = DATA[Number(b.dataset.method)];
+    b.querySelector('.micro').textContent = perMethod(x) + ' / ' + x.questions.length;
+  });
+}
+
+function bindQuestions() {
+  document.querySelectorAll('[data-answer]').forEach(function(input) {
+    input.onchange = function() {
+      state.answers[input.dataset.answer] = Number(input.value);
+      persist();
+      refreshQuestion(input.dataset.answer);
+      updateProgress();
+    };
+  });
+  document.querySelectorAll('[data-open]').forEach(function(input) {
+    input.oninput = function() {
+      if (input.value.trim()) {
+        state.answers[input.dataset.open] = input.value;
+      } else {
+        delete state.answers[input.dataset.open];
+      }
+      persist();
+      updateProgress();
+    };
+  });
+  document.querySelectorAll('[data-note]').forEach(function(input) {
+    input.oninput = function() {
+      state.notes[input.dataset.note] = input.value;
+      persist();
+    };
+  });
+  document.querySelectorAll('[data-skip]').forEach(function(b) {
+    b.onclick = function() {
+      state.answers[b.dataset.skip] = 'skip';
+      persist();
+      refreshQuestion(b.dataset.skip);
+      updateProgress();
+    };
+  });
+  document.querySelectorAll('[data-clear]').forEach(function(b) {
+    b.onclick = function() {
+      delete state.answers[b.dataset.clear];
+      persist();
+      refreshQuestion(b.dataset.clear);
+      updateProgress();
+    };
+  });
+}
+
+function refreshQuestion(id) {
+  var q = ALL.find(function(x) { return x.id === id; });
+  var m = DATA.find(function(x) { return x.questions.includes(q); });
+  var el = document.getElementById('question-' + id);
+  if (el) el.outerHTML = questionHTML(q, m);
+  bindQuestions();
+  if (window.location.hash) {
+    var replacement = document.getElementById('question-' + id);
+    if (replacement) {
+      var next = replacement.querySelector('input[value=\\"' + window.location.hash.slice(1) + '\\"]');
+      if (next) next.focus({ preventScroll: true });
+    }
+  }
+}
+
+function pause() {
+  var dialog = document.createElement('dialog');
+  var saveText = state.save ? 'Ваши ответы уже сохранены в этом браузере. Вернуться к ним можно с этого устройства.' : 'Пока ответы находятся только в памяти вкладки. Не закрывайте и не обновляйте страницу, если хотите продолжить без сохранения.';
+  var enableText = state.save ? 'Продолжить заполнение' : 'Сохранить черновик в браузере';
+  dialog.innerHTML = '<div class=\\"dialog-top\\"><h2>Можно сделать паузу</h2><button class=\\"icon-button\\" aria-label=\\"Закрыть\\" data-close>×</button></div><p>' + saveText + '</p><p>Также можно выгрузить текущие ответы в файл. Он не отправляется исследователю автоматически.</p><div class=\\"setup-actions\\"><button class=\\"button\\" data-enable>' + enableText + '</button><button class=\\"button secondary\\" data-export>Скачать ответы JSON</button></div>';
+  document.body.append(dialog);
+  dialog.showModal();
+  var close = function() {
+    dialog.close();
+    dialog.remove();
+  };
+  dialog.querySelector('[data-close]').onclick = close;
+  dialog.querySelector('[data-enable]').onclick = function() {
+    state.save = true;
+    persist();
+    close();
+    render();
+    toast(state.save ? 'Черновик сохранён на устройстве.' : 'Не удалось сохранить. Не закрывайте вкладку.');
+  };
+  dialog.querySelector('[data-export]').onclick = function() { download('json'); };
+  dialog.addEventListener('cancel', function() { dialog.remove(); });
+}
+
+function scores() {
+  var output = {};
+  var msp = DATA[0];
+  if (msp.questions.every(done)) {
+    var sum = function(ids) {
+      return ids.reduce(function(s, i) { return s + (state.answers['MSPSS-' + i] || 0); }, 0);
+    };
+    var total = sum(Array.from({ length: 12 }, function(_, i) { return i + 1; }));
+    output.MSPSS = {
+      total: total,
+      mean: total / 12,
+      specialPerson: sum([1, 2, 5, 10]),
+      family: sum([3, 4, 8, 11]),
+      friends: sum([6, 7, 9, 12]),
+      note: 'Расчёт по предоставленному ключу; категории уровня не применены.'
+    };
+  }
+  return output;
+}
+
+function renderSummary() {
+  var count = completed();
+  var skip = ALL.filter(skipped).length;
+  var unanswered = ALL.length - count - skip;
+  var result = scores();
+  var mspCard = result.MSPSS ? '<article class=\\"result-card\\"><h2>Социальная поддержка · MSPSS</h2><p>Более высокий балл соответствует большей воспринимаемой поддержке. Категории «низкая / средняя / высокая» не присваиваются.</p><div class=\\"result-row\\"><span>Общий балл</span><span class=\\"score\\">' + result.MSPSS.total + ' / 84</span></div><div class=\\"result-row\\"><span>Средний балл</span><span class=\\"score\\">' + result.MSPSS.mean.toFixed(2) + ' / 7</span></div><div class=\\"result-row\\"><span>Значимый другой</span><span class=\\"score\\">' + result.MSPSS.specialPerson + ' / 28</span></div><div class=\\"result-row\\"><span>Семья</span><span class=\\"score\\">' + result.MSPSS.family + ' / 28</span></div><div class=\\"result-row\\"><span>Друзья</span><span class=\\"score\\">' + result.MSPSS.friends + ' / 28</span></div></article>' : '<article class=\\"result-card\\"><h2>Социальная поддержка · MSPSS</h2><p>Для подсчёта MSPSS нужны ответы на все 12 утверждений. Пропуски не заменяются нулём.</p></article>';
+  main.innerHTML = '<section class=\\"summary\\"><div class=\\"eyebrow\\">Обзор заполнения</div><h1>' + (unanswered ? 'Обзор ответов' : 'Опросник заполнен') + '</h1><p class=\\"summary-intro\\">' + count + ' из ' + ALL.length + ' вопросов заполнено. Пропущено по Вашему выбору: ' + skip + '. Без ответа: ' + unanswered + '. Ответы никуда не отправлены. Вы можете проверить их или скачать файл.</p><div class=\\"notice\\"><strong>Не оценка и не диагноз</strong>Результаты не определяют, насколько Вы «хорошая» мать. Для большинства разделов автоматическая интерпретация отключена: в исходных ключах есть пропуски или противоречия. Для MSPSS доступен только числовой подсчёт по предоставленному ключу.</div><div class=\\"review-list\\">' + DATA.map(function(m, i) {
+    return '<button class=\\"review-button\\" data-review=\\"' + i + '\\"><span>' + String(i + 1).padStart(2, '0') + ' · ' + escapeHTML(m.title) + '</span><span>' + perMethod(m) + ' / ' + m.questions.length + ' →</span></button>';
+  }).join('') + '</div><div class=\\"summary-grid\\">' + mspCard + '<article class=\\"result-card\\"><h2>Остальные разделы</h2><p>Выгружаются ответы и отметки пропусков, без автоматических диагнозов, категорий тяжести или определения типа отношения к беременности.</p><p>Обработка возможна после сверки версии каждого опросника и его ключа исследователем.</p></article></div><div class=\\"summary-actions\\"><button class=\\"button\\" id=\\"download-json\\">Скачать ответы JSON ↓</button><button class=\\"button secondary\\" id=\\"download-csv\\">Скачать таблицу CSV ↓</button><button class=\\"button secondary\\" id=\\"continue\\">Вернуться к заполнению</button></div><details><summary>Что включено в выгрузку</summary><p>Код участницы (если введён), время начала и обновления, версия сайта, названия методик, номера и тексты вопросов, выбранные ответы, пропуски и дополнительные записи. Числовой подсчёт MSPSS включается только при полном заполнении этой шкалы. Имя и контакты не запрашиваются.</p></details><div class=\\"setup-actions\\"><button class=\\"text-button\\" id=\\"delete-all\\">Удалить ответы с этого устройства</button><button class=\\"text-button\\" id=\\"settings-summary\\">Пауза и сохранение</button></div></section>';
+  document.querySelectorAll('[data-review]').forEach(function(b) {
+    b.onclick = function() {
+      state.method = Number(b.dataset.review);
+      state.offset = 0;
+      state.screen = 'survey';
+      persist();
+      render();
+      focusTop();
+    };
+  });
+  document.getElementById('download-json').onclick = function() { download('json'); };
+  document.getElementById('download-csv').onclick = function() { download('csv'); };
+  document.getElementById('continue').onclick = function() {
+    state.screen = 'survey';
+    render();
+    focusTop();
+  };
+  document.getElementById('settings-summary').onclick = pause;
+  document.getElementById('delete-all').onclick = function() {
+    if (confirm('Удалить все ответы и черновик? Уже скачанные файлы останутся на устройстве.')) {
+      clearLocal();
+      state = { screen: 'home', method: 0, offset: 0, answers: {}, notes: {}, code: '', save: false, startedAt: null, updatedAt: null };
+      render();
+      focusTop();
+      toast('Ответы и черновик удалены.');
+    }
+  };
+}
+
+function exportData() {
+  return {
+    schemaVersion: VERSION,
+    source: 'Предоставленный пользователем текст и дополнение MSPSS. Методики не прошли независимую сверку.',
+    participantCode: state.code,
+    startedAt: state.startedAt,
+    updatedAt: state.updatedAt,
+    exportedAt: new Date().toISOString(),
+    answered: completed(),
+    skipped: ALL.filter(skipped).length,
+    unanswered: ALL.length - handled(),
+    methods: DATA.map(function(m) {
+      return {
+        id: m.id,
+        title: m.title,
+        questions: m.questions.map(function(q) {
+          var value = state.answers[q.id];
+          var opts = q.options || m.options;
+          return {
+            id: q.id,
+            number: q.number,
+            text: q.text,
+            status: done(q) ? 'answered' : skipped(q) ? 'skipped' : 'unanswered',
+            value: done(q) ? value : null,
+            label: done(q) ? (q.open ? value : opts.find(function(o) { return o.value === value; })?.label) : null,
+            note: state.notes[q.id] || null
+          };
+        })
+      };
+    }),
+    scores: scores(),
+    interpretation: 'Не диагностический результат. Автоматическая интерпретация отключена.'
+  };
+}
+
+function csvCell(v) {
+  var s = String(v ?? '');
+  if (/^[=+@-	]/.test(s)) s = \\'\\' + s;
+  return \\'\\' + s.replace(/\\"/g, \\'\\'\\') + \\'\\';
+}
+
+function download(format) {
+  var data = exportData();
+  var content;
+  var mime;
+  if (format === 'json') {
+    content = JSON.stringify(data, null, 2);
+    mime = 'application/json;charset=utf-8';
+  } else {
+    var rows = [
+      ['participant_code', 'method', 'question_number', 'question', 'status', 'value', 'answer', 'note']
+    ];
+    for (var i = 0; i < data.methods.length; i++) {
+      var m = data.methods[i];
+      for (var j = 0; j < m.questions.length; j++) {
+        var q = m.questions[j];
+        rows.push([data.participantCode, m.id, q.number, q.text, q.status, q.value, q.label, q.note]);
+      }
+    }
+    content = '\\ufeff' + rows.map(function(r) { return r.map(csvCell).join(';'); }).join('\\r\\n');
+    mime = 'text/csv;charset=utf-8';
+  }
+  var blob = new Blob([content], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'berezhno-answers-' + new Date().toISOString().slice(0, 10) + '.' + format;
+  a.click();
+  setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+  toast('Файл подготовлен. Ответы не отправлены на сервер.');
+}
+
+const privacy = document.getElementById('privacy-dialog');
+document.getElementById('privacy-btn').onclick = function() { privacy.showModal(); };
+document.getElementById('close-privacy').onclick = function() { privacy.close(); };
+document.getElementById('close-privacy-bottom').onclick = function() { privacy.close(); };
+
+window.addEventListener('beforeunload', function(e) {
+  if (handled() > 0 && !state.save) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+render();
+"""
+
+with open('/c/Users/lanam/berezhno-questionnaire/public/app.js', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(content)
+print('Written:', len(content), 'chars')
