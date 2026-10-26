@@ -1,3 +1,4 @@
 # Supabase project configuration
 # Email settings for OTP and notifications
 email_config = "smtp"
+email_address = "mamaladzelana1@gmail.com"

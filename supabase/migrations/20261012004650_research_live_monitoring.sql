@@ -2,7 +2,7 @@ create extension if not exists pgcrypto with schema extensions;
 create table public.research_settings(singleton boolean primary key default true check(singleton),collection_enabled boolean not null default false);
 insert into public.research_settings values(true,false);
 create table public.research_admins(email text primary key);
-insert into public.research_admins values('mamaladze_vokpc2@mail.ru');
+insert into public.research_admins values('mamaladzelana1@gmail.com');
 create table public.research_sessions(
  id uuid primary key default gen_random_uuid(), user_code text unique not null,
  token_hash text unique not null, is_test boolean not null default true,
